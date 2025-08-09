@@ -10,11 +10,11 @@ require("dotenv/config");
 const app = (0, express_1.default)();
 // Configuração CORS para produção
 const allowedOrigins = [
-    'http://localhost:5173', // desenvolvimento local
-    'http://localhost:3000', // desenvolvimento alternativo
-    'https://seu-frontend.vercel.app', // substitua pela URL do seu frontend
-    'https://localhost:5000' // substitua pelo seu domínio personalizado
+  'http://localhost:5173', // desenvolvimento local (Vite)
+  'http://localhost:5000', // desenvolvimento backend local
+  'https://nectix.netlify.app', // seu frontend em produção
 ];
+
 app.use((0, cors_1.default)({
     origin: (origin, callback) => {
         // Permite requisições sem origin (aplicativos mobile, Postman, etc.)
