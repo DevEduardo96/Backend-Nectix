@@ -3,16 +3,14 @@
   "version": "1.0.0",
   "description": "Backend API para ArtfyStore - Sistema de pagamentos e gestão de produtos digitais",
   "main": "dist/index.js",
-  "type": "module",
   "scripts": {
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "build": "node build.js",
-    "build:tsc": "tsc",
+    "build": "npm run clean && tsc && echo '✅ Build concluído!'",
+    "build:verbose": "node build.mjs",
     "copy-files": "copyfiles -u 1 \"src/**/*.{html,css,png,jpg,jpeg,gif,svg,json}\" dist/ || true",
     "clean": "rimraf dist",
     "type-check": "tsc --noEmit",
-    "prebuild": "npm run clean",
     "postinstall": "echo 'Instalação concluída'"
   },
   "dependencies": {
