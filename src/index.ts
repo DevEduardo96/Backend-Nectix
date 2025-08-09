@@ -15,48 +15,46 @@ const allowedOrigins = [
 app.use(cors({
   origin: (origin, callback) => {
     console.log(`🔍 CORS check - Origin: ${origin}`);
-    
-    // Permite requisições sem origin (aplicativos mobile, Postman, etc.)
+
     if (!origin) {
       console.log('✅ CORS - Permitindo requisição sem origin');
       return callback(null, true);
     }
-    
+
     if (allowedOrigins.includes(origin)) {
       console.log(`✅ CORS - Origin ${origin} permitida`);
       return callback(null, true);
     }
-    
-    // Em desenvolvimento, ser mais flexível
+
     if (process.env.NODE_ENV === 'development') {
       console.log(`⚠️  CORS - Origin ${origin} não está na lista, mas permitindo em desenvolvimento`);
       return callback(null, true);
     }
-    
-    // Em produção, ser restritivo
+
     console.error(`❌ CORS - Origin ${origin} NÃO permitida`);
     console.log('📋 Origins permitidas:', allowedOrigins);
-    const msg = `Origin ${origin} não permitida pelo CORS`;
-    return callback(new Error(msg), false);
+
+    // Negar a origem sem lançar erro, para evitar 500
+    return callback(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with'],
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
 }));
 
-// Handler explícito para responder a todas requisições OPTIONS com CORS válido
+// Responder OPTIONS para todas rotas (preflight)
 app.options('*', cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
     if (process.env.NODE_ENV === 'development') return callback(null, true);
-    return callback(new Error('Origin não permitida'), false);
+    return callback(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with'],
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
 }));
 
 // Middleware para parsing de JSON
@@ -70,7 +68,7 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     version: process.env.npm_package_version || '1.0.0',
     cors: {
-      allowedOrigins: allowedOrigins,
+      allowedOrigins,
       environment: process.env.NODE_ENV || 'development'
     }
   });
