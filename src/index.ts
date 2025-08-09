@@ -9,7 +9,7 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:5173', // desenvolvimento local
   'http://localhost:3000', // desenvolvimento alternativo
-  'https://seu-frontend.vercel.app', // substitua pela URL do seu frontend
+  'https://nectix.netlify.app', // substitua pela URL do seu frontend
   'https://localhost:5000' // substitua pelo seu domínio personalizado
 ];
 
