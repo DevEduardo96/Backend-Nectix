@@ -1,0 +1,38 @@
+{
+  "name": "artfystore-backend",
+  "version": "1.0.0",
+  "description": "Backend API para ArtfyStore - Sistema de pagamentos e gestão de produtos digitais",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "postbuild": "copyfiles -u 1 \"src/**/*.{html,css,png,jpg,jpeg,gif,svg,json}\" dist/",
+    "clean": "rimraf dist",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "@supabase/supabase-js": "^2.39.0",
+    "mercadopago": "^2.0.15",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.6",
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0",
+    "rimraf": "^5.0.5",
+    "copyfiles": "^2.4.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["api", "backend", "mercadopago", "supabase", "payments", "digital-products"],
+  "author": "Eduardo",
+  "license": "MIT"
+}
