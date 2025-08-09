@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: artfystore-backend
+    env: node
+    plan: starter # ou free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MERCADO_PAGO_ACCESS_TOKEN
+        sync: false # será definido manualmente no painel do Render
+      - key: SUPABASE_URL
+        sync: false # será definido manualmente no painel do Render
+      - key: SUPABASE_ANON_KEY
+        sync: false # será definido manualmente no painel do Render
+    autoDeploy: true
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
