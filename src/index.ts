@@ -8,10 +8,8 @@ const app = express();
 // Configuração CORS para produção
 const allowedOrigins = [
   'http://localhost:5173', // desenvolvimento local (Vite)
-  'http://localhost:3000', // desenvolvimento alternativo (React/Next)
   'http://localhost:5000', // desenvolvimento backend local
-  'https://nectix.netlify.app/', // seu frontend em produção
-
+  'https://nectix.netlify.app', // seu frontend em produção
 ];
 
 app.use(cors({
