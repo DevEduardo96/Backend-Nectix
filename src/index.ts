@@ -1,5 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes.js";
+import { registerRoutes } from "./routes";
 import cors from 'cors';
 import 'dotenv/config';
 
@@ -7,27 +7,43 @@ const app = express();
 
 // Configuração CORS para produção
 const allowedOrigins = [
-  'http://localhost:5173', // desenvolvimento local
-  'http://localhost:3000', // desenvolvimento alternativo
-  'https://nectix.netlify.app', // substitua pela URL do seu frontend
-  'https://localhost:5000' // substitua pelo seu domínio personalizado
+  'http://localhost:5173', // desenvolvimento local (Vite)
+  'http://localhost:3000', // desenvolvimento alternativo (React/Next)
+  'http://localhost:5000', // desenvolvimento backend local
+  'https://nectix.netlify.app', // seu frontend em produção
+  'https://nectix.vercel.app', // caso use Vercel também
 ];
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Permite requisições sem origin (aplicativos mobile, Postman, etc.)
-    if (!origin) return callback(null, true);
+    console.log(`🔍 CORS check - Origin: ${origin}`);
     
-    if (allowedOrigins.includes(origin)) {
+    // Permite requisições sem origin (aplicativos mobile, Postman, etc.)
+    if (!origin) {
+      console.log('✅ CORS - Permitindo requisição sem origin');
       return callback(null, true);
     }
     
-    // Em produção, você pode ser mais restritivo
+    if (allowedOrigins.includes(origin)) {
+      console.log(`✅ CORS - Origin ${origin} permitida`);
+      return callback(null, true);
+    }
+    
+    // Em desenvolvimento, ser mais flexível
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`⚠️  CORS - Origin ${origin} não está na lista, mas permitindo em desenvolvimento`);
+      return callback(null, true);
+    }
+    
+    // Em produção, ser restritivo
+    console.error(`❌ CORS - Origin ${origin} NÃO permitida`);
+    console.log('📋 Origins permitidas:', allowedOrigins);
     const msg = `Origin ${origin} não permitida pelo CORS`;
     return callback(new Error(msg), false);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with'],
   optionsSuccessStatus: 200
 }));
 
@@ -40,7 +56,11 @@ app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    version: process.env.npm_package_version || '1.0.0'
+    version: process.env.npm_package_version || '1.0.0',
+    cors: {
+      allowedOrigins: allowedOrigins,
+      environment: process.env.NODE_ENV || 'development'
+    }
   });
 });
 
@@ -110,6 +130,7 @@ app.use((req, res, next) => {
       console.log(`🚀 Servidor rodando em ${host}:${port}`);
       console.log(`📍 Health check: http://${host}:${port}/health`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🔒 CORS configurado para:`, allowedOrigins);
     });
 
     // Graceful shutdown
