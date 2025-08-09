@@ -45,6 +45,20 @@ app.use(cors({
   optionsSuccessStatus: 200
 }));
 
+// Handler explícito para responder a todas requisições OPTIONS com CORS válido
+app.options('*', cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (process.env.NODE_ENV === 'development') return callback(null, true);
+    return callback(new Error('Origin não permitida'), false);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with'],
+  optionsSuccessStatus: 200
+}));
+
 // Middleware para parsing de JSON
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
