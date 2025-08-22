@@ -32,34 +32,23 @@ const enderecoSchema = z.object({
   estado: z.string().min(1, "Estado é obrigatório")
 });
 
-// Validação dos dados de entrada para pagamento - ATUALIZADA
+// Schema simplificado para aceitar exatamente o payload do frontend
 const createPaymentSchema = z.object({
   carrinho: z.array(z.object({
-    id: z.union([z.string(), z.number()]),
+    id: z.number(),
     name: z.string(),
-    price: z.union([z.number(), z.string()]).optional().transform(val => {
-      if (val === undefined) return undefined;
-      const num = typeof val === 'string' ? parseFloat(val) : val;
-      if (isNaN(num)) throw new Error("Preço inválido");
-      return num;
-    }),
-    quantity: z.number().min(1, "Quantidade deve ser maior que zero"),
+    price: z.number(),
+    quantity: z.number().min(1),
     variacoes: z.object({
       cor: z.string().optional(),
       tamanho: z.string().optional()
     }).optional()
   })),
-  nomeCliente: z.string().min(1, "Nome do cliente é obrigatório"),
+  nomeCliente: z.string().min(1, "Nome é obrigatório"),
   email: z.string().email("Email inválido"),
-  telefone: z.string().min(1, "Telefone é obrigatório"), // NOVO CAMPO
-  endereco: enderecoSchema, // NOVO CAMPO
-  total: z.union([z.number(), z.string()]).transform(val => {
-    const num = typeof val === 'string' ? parseFloat(val) : val;
-    if (isNaN(num) || num <= 0) {
-      throw new Error("Total deve ser um número maior que zero");
-    }
-    return num;
-  })
+  telefone: z.string().min(1, "Telefone é obrigatório"),
+  endereco: enderecoSchema,
+  total: z.number().min(0.01, "Total deve ser maior que zero")
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -146,12 +135,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Criar descrição baseada no carrinho
+      // Criar descrição rica baseada no carrinho
       const firstItem = carrinho[0];
-      const itemName = firstItem.name;
-      const description = carrinho.length === 1 
-        ? itemName
-        : `Compra de ${carrinho.length} produtos - ${itemName} e outros`;
+      let description = firstItem.name;
+      
+      // Adicionar variações à descrição se existirem
+      if (firstItem.variacoes) {
+        const variacoes = [];
+        if (firstItem.variacoes.cor) variacoes.push(firstItem.variacoes.cor);
+        if (firstItem.variacoes.tamanho) variacoes.push(firstItem.variacoes.tamanho);
+        if (variacoes.length > 0) {
+          description += ` - ${variacoes.join(' - ')}`;
+        }
+      }
+      
+      if (carrinho.length > 1) {
+        description = `Compra de ${carrinho.length} produtos - ${description} e outros`;
+      }
+
+      // Dividir nome em primeiro e último nome
+      const nomes = nomeCliente.trim().split(' ');
+      const firstName = nomes[0];
+      const lastName = nomes.length > 1 ? nomes.slice(1).join(' ') : '';
+
+      // Extrair apenas números do telefone para o Mercado Pago
+      const telefoneNumeros = telefone.replace(/\D/g, '');
 
       const paymentData = {
         transaction_amount: total,
@@ -159,9 +167,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         payment_method_id: "pix",
         payer: {
           email: email,
-          first_name: nomeCliente,
+          first_name: firstName,
+          last_name: lastName || firstName, // Se não há sobrenome, usar o primeiro nome
           phone: {
-            number: telefone
+            number: telefoneNumeros
           }
         },
         metadata: {
@@ -180,15 +189,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       };
 
-      console.log(`💳 Criando pagamento PIX:`, {
-        amount: total,
-        description,
-        email,
-        cliente: nomeCliente,
-        telefone,
-        endereco: endereco.cidade + ', ' + endereco.estado,
-        items_count: carrinho.length
-      });
+      console.log(`💳 Criando pagamento PIX com dados transformados:`);
+      console.log(`📝 Descrição: "${description}"`);
+      console.log(`👤 Nome: "${firstName}" + "${lastName}"`);
+      console.log(`📞 Telefone: "${telefone}" → "${telefoneNumeros}"`);
+      console.log(`📍 Endereço: ${endereco.cidade}, ${endereco.estado}`);
+      console.log(`💰 Valor: R$ ${total}`);
+      console.log(`📦 Itens: ${carrinho.length}`);
+      console.log(`🔧 Payload Mercado Pago:`, JSON.stringify(paymentData, null, 2));
 
       const paymentResponse = await retryWithBackoff(
         () => payment.create({ body: paymentData }),

@@ -29,36 +29,23 @@ const enderecoSchema = zod_1.z.object({
     cidade: zod_1.z.string().min(1, "Cidade é obrigatória"),
     estado: zod_1.z.string().min(1, "Estado é obrigatório")
 });
-// Validação dos dados de entrada para pagamento - ATUALIZADA
+// Schema simplificado para aceitar exatamente o payload do frontend
 const createPaymentSchema = zod_1.z.object({
     carrinho: zod_1.z.array(zod_1.z.object({
-        id: zod_1.z.union([zod_1.z.string(), zod_1.z.number()]),
+        id: zod_1.z.number(),
         name: zod_1.z.string(),
-        price: zod_1.z.union([zod_1.z.number(), zod_1.z.string()]).optional().transform(val => {
-            if (val === undefined)
-                return undefined;
-            const num = typeof val === 'string' ? parseFloat(val) : val;
-            if (isNaN(num))
-                throw new Error("Preço inválido");
-            return num;
-        }),
-        quantity: zod_1.z.number().min(1, "Quantidade deve ser maior que zero"),
+        price: zod_1.z.number(),
+        quantity: zod_1.z.number().min(1),
         variacoes: zod_1.z.object({
             cor: zod_1.z.string().optional(),
             tamanho: zod_1.z.string().optional()
         }).optional()
     })),
-    nomeCliente: zod_1.z.string().min(1, "Nome do cliente é obrigatório"),
+    nomeCliente: zod_1.z.string().min(1, "Nome é obrigatório"),
     email: zod_1.z.string().email("Email inválido"),
-    telefone: zod_1.z.string().min(1, "Telefone é obrigatório"), // NOVO CAMPO
-    endereco: enderecoSchema, // NOVO CAMPO
-    total: zod_1.z.union([zod_1.z.number(), zod_1.z.string()]).transform(val => {
-        const num = typeof val === 'string' ? parseFloat(val) : val;
-        if (isNaN(num) || num <= 0) {
-            throw new Error("Total deve ser um número maior que zero");
-        }
-        return num;
-    })
+    telefone: zod_1.z.string().min(1, "Telefone é obrigatório"),
+    endereco: enderecoSchema,
+    total: zod_1.z.number().min(0.01, "Total deve ser maior que zero")
 });
 async function registerRoutes(app) {
     // Configuração do Supabase
@@ -128,21 +115,39 @@ async function registerRoutes(app) {
                     details: "Mercado Pago não configurado. Configure MERCADO_PAGO_ACCESS_TOKEN."
                 });
             }
-            // Criar descrição baseada no carrinho
+            // Criar descrição rica baseada no carrinho
             const firstItem = carrinho[0];
-            const itemName = firstItem.name;
-            const description = carrinho.length === 1
-                ? itemName
-                : `Compra de ${carrinho.length} produtos - ${itemName} e outros`;
+            let description = firstItem.name;
+            // Adicionar variações à descrição se existirem
+            if (firstItem.variacoes) {
+                const variacoes = [];
+                if (firstItem.variacoes.cor)
+                    variacoes.push(firstItem.variacoes.cor);
+                if (firstItem.variacoes.tamanho)
+                    variacoes.push(firstItem.variacoes.tamanho);
+                if (variacoes.length > 0) {
+                    description += ` - ${variacoes.join(' - ')}`;
+                }
+            }
+            if (carrinho.length > 1) {
+                description = `Compra de ${carrinho.length} produtos - ${description} e outros`;
+            }
+            // Dividir nome em primeiro e último nome
+            const nomes = nomeCliente.trim().split(' ');
+            const firstName = nomes[0];
+            const lastName = nomes.length > 1 ? nomes.slice(1).join(' ') : '';
+            // Extrair apenas números do telefone para o Mercado Pago
+            const telefoneNumeros = telefone.replace(/\D/g, '');
             const paymentData = {
                 transaction_amount: total,
                 description: description,
                 payment_method_id: "pix",
                 payer: {
                     email: email,
-                    first_name: nomeCliente,
+                    first_name: firstName,
+                    last_name: lastName || firstName, // Se não há sobrenome, usar o primeiro nome
                     phone: {
-                        number: telefone
+                        number: telefoneNumeros
                     }
                 },
                 metadata: {
@@ -160,15 +165,14 @@ async function registerRoutes(app) {
                     total_itens: carrinho.length
                 }
             };
-            console.log(`💳 Criando pagamento PIX:`, {
-                amount: total,
-                description,
-                email,
-                cliente: nomeCliente,
-                telefone,
-                endereco: endereco.cidade + ', ' + endereco.estado,
-                items_count: carrinho.length
-            });
+            console.log(`💳 Criando pagamento PIX com dados transformados:`);
+            console.log(`📝 Descrição: "${description}"`);
+            console.log(`👤 Nome: "${firstName}" + "${lastName}"`);
+            console.log(`📞 Telefone: "${telefone}" → "${telefoneNumeros}"`);
+            console.log(`📍 Endereço: ${endereco.cidade}, ${endereco.estado}`);
+            console.log(`💰 Valor: R$ ${total}`);
+            console.log(`📦 Itens: ${carrinho.length}`);
+            console.log(`🔧 Payload Mercado Pago:`, JSON.stringify(paymentData, null, 2));
             const paymentResponse = await retryWithBackoff(() => payment.create({ body: paymentData }), 3, 1000);
             if (!paymentResponse) {
                 return res.status(500).json({
