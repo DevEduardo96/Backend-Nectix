@@ -21,7 +21,18 @@ async function retryWithBackoff<T>(
   throw new Error("Max retries exceeded");
 }
 
-// Validação dos dados de entrada para pagamento
+// Schema de validação para o endereço
+const enderecoSchema = z.object({
+  cep: z.string().min(1, "CEP é obrigatório"),
+  rua: z.string().min(1, "Rua é obrigatória"),
+  numero: z.string().min(1, "Número é obrigatório"),
+  complemento: z.string().optional(),
+  bairro: z.string().min(1, "Bairro é obrigatório"),
+  cidade: z.string().min(1, "Cidade é obrigatória"),
+  estado: z.string().min(1, "Estado é obrigatório")
+});
+
+// Validação dos dados de entrada para pagamento - ATUALIZADA
 const createPaymentSchema = z.object({
   carrinho: z.array(z.object({
     id: z.union([z.string(), z.number()]),
@@ -32,10 +43,16 @@ const createPaymentSchema = z.object({
       if (isNaN(num)) throw new Error("Preço inválido");
       return num;
     }),
-    quantity: z.number().min(1, "Quantidade deve ser maior que zero")
+    quantity: z.number().min(1, "Quantidade deve ser maior que zero"),
+    variacoes: z.object({
+      cor: z.string().optional(),
+      tamanho: z.string().optional()
+    }).optional()
   })),
   nomeCliente: z.string().min(1, "Nome do cliente é obrigatório"),
   email: z.string().email("Email inválido"),
+  telefone: z.string().min(1, "Telefone é obrigatório"), // NOVO CAMPO
+  endereco: enderecoSchema, // NOVO CAMPO
   total: z.union([z.number(), z.string()]).transform(val => {
     const num = typeof val === 'string' ? parseFloat(val) : val;
     if (isNaN(num) || num <= 0) {
@@ -90,7 +107,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // ROTA: POST /api/payments/criar-pagamento - Para o frontend
+  // ROTA: POST /api/payments/criar-pagamento - Para o frontend - ATUALIZADA
   app.post("/api/payments/criar-pagamento", async (req, res) => {
     try {
       console.log(`🛒 Dados recebidos do carrinho:`, JSON.stringify(req.body, null, 2));
@@ -105,7 +122,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const { carrinho, nomeCliente, email, total } = validation.data;
+      const { carrinho, nomeCliente, email, telefone, endereco, total } = validation.data;
 
       if (!payment) {
         return res.status(503).json({ 
@@ -128,15 +145,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         payer: {
           email: email,
           first_name: nomeCliente,
+          phone: {
+            number: telefone
+          }
         },
         metadata: {
           carrinho: carrinho.map(item => ({
             produto_id: item.id,
             nome: item.name,
-            quantidade: item.quantity
+            quantidade: item.quantity,
+            preco_unitario: item.price,
+            variacoes: item.variacoes || {}
           })),
           cliente: nomeCliente,
           email: email,
+          telefone: telefone,
+          endereco: endereco,
           total_itens: carrinho.length
         }
       };
@@ -146,6 +170,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description,
         email,
         cliente: nomeCliente,
+        telefone,
+        endereco: endereco.cidade + ', ' + endereco.estado,
         items_count: carrinho.length
       });
 
@@ -161,7 +187,64 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Extrair informações do pagamento
+      console.log(`✅ Pagamento criado no Mercado Pago:`, { 
+        id: paymentResponse.id, 
+        status: paymentResponse.status 
+      });
+
+      // **NOVO: SALVAR PAGAMENTO NO SUPABASE**
+      if (supabase) {
+        try {
+          console.log(`💾 Salvando pagamento no Supabase...`);
+          
+          const { data: pagamentoData, error: supabaseError } = await supabase
+            .from('pagamentos')
+            .insert([
+              {
+                pagamento_id: paymentResponse.id.toString(),
+                status: paymentResponse.status,
+                email: email,
+                nome_cliente: nomeCliente,
+                telefone: telefone,
+                valor: total,
+                itens: carrinho.map(item => ({
+                  produto_id: item.id,
+                  nome: item.name,
+                  quantidade: item.quantity,
+                  preco_unitario: item.price || 0,
+                  preco_total: (item.price || 0) * item.quantity,
+                  variacoes: item.variacoes || {}
+                })),
+                endereco_entrega: {
+                  cep: endereco.cep,
+                  rua: endereco.rua,
+                  numero: endereco.numero,
+                  complemento: endereco.complemento || null,
+                  bairro: endereco.bairro,
+                  cidade: endereco.cidade,
+                  estado: endereco.estado
+                },
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              }
+            ])
+            .select();
+
+          if (supabaseError) {
+            console.error(`❌ Erro ao salvar no Supabase:`, supabaseError);
+            // Não falha a operação, apenas loga o erro
+          } else {
+            console.log(`✅ Pagamento salvo no Supabase:`, pagamentoData?.[0]?.pagamento_id);
+          }
+        } catch (supabaseInsertError) {
+          console.error(`❌ Erro inesperado ao salvar no Supabase:`, supabaseInsertError);
+          // Não falha a operação, apenas loga o erro
+        }
+      } else {
+        console.warn(`⚠️ Supabase não configurado - pagamento não foi salvo no banco`);
+      }
+
+      // Extrair informações do pagamento para retornar ao frontend
       const paymentInfo = {
         id: paymentResponse.id,
         status: paymentResponse.status,
@@ -170,17 +253,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ticket_url: paymentResponse.point_of_interaction?.transaction_data?.ticket_url || null,
         total: total,
         cliente: nomeCliente,
+        email: email,
+        telefone: telefone,
+        endereco: endereco,
         produtos: carrinho.map(item => ({
           id: item.id,
           nome: item.name,
-          quantidade: item.quantity
+          quantidade: item.quantity,
+          variacoes: item.variacoes || {}
         }))
       };
 
-      console.log(`✅ Pagamento criado com sucesso:`, { 
+      console.log(`✅ Pagamento processado com sucesso:`, { 
         id: paymentInfo.id, 
         status: paymentInfo.status,
-        qr_code_exists: !!paymentInfo.qr_code
+        qr_code_exists: !!paymentInfo.qr_code,
+        saved_to_supabase: !!supabase
       });
 
       res.json(paymentInfo);
@@ -194,7 +282,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // WEBHOOK: POST /api/payments/webhook - Recebe notificações do Mercado Pago
+  // WEBHOOK: POST /api/payments/webhook - Recebe notificações do Mercado Pago - ATUALIZADO
   app.post("/api/payments/webhook", async (req, res) => {
     try {
       console.log(`🔔 Webhook recebido:`, JSON.stringify(req.body, null, 2));
@@ -218,6 +306,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
         
         console.log(`📊 Status do pagamento ${paymentId}:`, paymentDetails.status);
+
+        // **NOVO: ATUALIZAR STATUS NO SUPABASE**
+        if (supabase) {
+          try {
+            console.log(`💾 Atualizando status no Supabase para pagamento ${paymentId}...`);
+            
+            const { error: updateError } = await supabase
+              .from('pagamentos')
+              .update({ 
+                status: paymentDetails.status,
+                updated_at: new Date().toISOString()
+              })
+              .eq('pagamento_id', paymentId.toString());
+
+            if (updateError) {
+              console.error(`❌ Erro ao atualizar status no Supabase:`, updateError);
+            } else {
+              console.log(`✅ Status atualizado no Supabase: ${paymentDetails.status}`);
+            }
+          } catch (supabaseUpdateError) {
+            console.error(`❌ Erro inesperado ao atualizar Supabase:`, supabaseUpdateError);
+          }
+        }
         
         // Se pagamento foi aprovado, entregar os links
         if (paymentDetails.status === "approved") {
@@ -276,6 +387,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // NOVA ROTA: GET /api/payments/pedido/:id - Buscar dados do pedido no Supabase
+  app.get("/api/payments/pedido/:id", async (req, res) => {
+    try {
+      const paymentId = req.params.id;
+      
+      if (!supabase) {
+        return res.status(503).json({ 
+          error: "Base de dados indisponível",
+          details: "Supabase não configurado"
+        });
+      }
+
+      const { data: pedido, error } = await supabase
+        .from('pagamentos')
+        .select('*')
+        .eq('pagamento_id', paymentId)
+        .single();
+
+      if (error || !pedido) {
+        return res.status(404).json({ 
+          error: "Pedido não encontrado",
+          details: error?.message || "Pedido não existe"
+        });
+      }
+
+      res.json({
+        id: pedido.pagamento_id,
+        status: pedido.status,
+        cliente: pedido.nome_cliente,
+        email: pedido.email,
+        telefone: pedido.telefone,
+        valor: pedido.valor,
+        itens: pedido.itens,
+        endereco_entrega: pedido.endereco_entrega,
+        created_at: pedido.created_at,
+        updated_at: pedido.updated_at
+      });
+    } catch (error) {
+      console.error(`❌ Erro ao buscar pedido:`, error);
+      res.status(500).json({ 
+        error: "Erro interno",
+        details: error instanceof Error ? error.message : "Erro desconhecido"
+      });
+    }
+  });
+
   // Função para processar pagamento aprovado
   async function processApprovedPayment(paymentDetails: any, supabase: any) {
     try {
@@ -318,7 +475,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               produto_id: produto.id,
               nome: produto.name,
               download_url: produto.download_url,
-              quantidade: item.quantidade
+              quantidade: item.quantidade,
+              variacoes: item.variacoes || {}
             });
             
             console.log(`✅ Link encontrado para produto ${produto.name}`);
@@ -339,6 +497,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // TODO: Implementar envio de email com os links
         // await sendDownloadEmail(email, downloadLinks);
+        
+        // **NOVO: ATUALIZAR STATUS PARA "ENTREGUE" NO SUPABASE**
+        try {
+          const { error: deliveryUpdateError } = await supabase
+            .from('pagamentos')
+            .update({ 
+              status: 'delivered', // Status customizado para produtos digitais
+              updated_at: new Date().toISOString()
+            })
+            .eq('pagamento_id', paymentDetails.id.toString());
+
+          if (deliveryUpdateError) {
+            console.error(`❌ Erro ao marcar como entregue:`, deliveryUpdateError);
+          } else {
+            console.log(`✅ Pagamento marcado como entregue no Supabase`);
+          }
+        } catch (error) {
+          console.error(`❌ Erro ao atualizar status de entrega:`, error);
+        }
       } else {
         console.warn(`⚠️ Nenhum link de download encontrado para o pagamento ${paymentDetails.id}`);
       }
@@ -368,7 +545,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           downloadLinks.push({
             produto_id: produto.id,
             nome: produto.name,
-            download_url: produto.download_url
+            download_url: produto.download_url,
+            variacoes: item.variacoes || {}
           });
         }
       }
