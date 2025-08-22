@@ -216,7 +216,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .from('pagamentos')
             .insert([
               {
-                pagamento_id: paymentResponse.id.toString(),
+                pagamento_id: paymentResponse.id?.toString() || '',
                 status: paymentResponse.status,
                 email: email,
                 nome_cliente: nomeCliente,

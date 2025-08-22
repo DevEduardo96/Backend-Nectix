@@ -5,7 +5,6 @@ const http_1 = require("http");
 const supabase_js_1 = require("@supabase/supabase-js");
 const mercadopago_1 = require("mercadopago");
 const zod_1 = require("zod");
-
 // Função auxiliar para retry com backoff
 async function retryWithBackoff(fn, maxRetries = 3, delay = 1000) {
     for (let i = 0; i < maxRetries; i++) {
@@ -20,7 +19,6 @@ async function retryWithBackoff(fn, maxRetries = 3, delay = 1000) {
     }
     throw new Error("Max retries exceeded");
 }
-
 // Schema de validação para o endereço
 const enderecoSchema = zod_1.z.object({
     cep: zod_1.z.string().min(1, "CEP é obrigatório"),
@@ -31,7 +29,6 @@ const enderecoSchema = zod_1.z.object({
     cidade: zod_1.z.string().min(1, "Cidade é obrigatória"),
     estado: zod_1.z.string().min(1, "Estado é obrigatório")
 });
-
 // Validação dos dados de entrada para pagamento - ATUALIZADA
 const createPaymentSchema = zod_1.z.object({
     carrinho: zod_1.z.array(zod_1.z.object({
@@ -63,38 +60,28 @@ const createPaymentSchema = zod_1.z.object({
         return num;
     })
 });
-
 async function registerRoutes(app) {
     // Configuração do Supabase
     const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    
     console.log(`🔧 Configuração do Supabase:`);
     console.log(`URL: ${supabaseUrl ? "✅ Configurada" : "❌ Não configurada"}`);
     console.log(`KEY: ${supabaseKey ? "✅ Configurada" : "❌ Não configurada"}`);
-    
     if (!supabaseUrl || !supabaseKey) {
         console.warn(`⚠️ Supabase não configurado. Algumas funcionalidades podem não funcionar.`);
     }
-    
     const supabase = supabaseUrl && supabaseKey ? (0, supabase_js_1.createClient)(supabaseUrl, supabaseKey) : null;
-
     // Configuração do Mercado Pago
     const mercadoPagoAccessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
-    
     console.log(`💳 Mercado Pago: ${mercadoPagoAccessToken ? "✅ Configurado" : "❌ Não configurado"}`);
-    
     if (!mercadoPagoAccessToken) {
         console.error(`❌ MERCADO_PAGO_ACCESS_TOKEN não configurado. Pagamentos não funcionarão.`);
     }
-    
     const client = mercadoPagoAccessToken ? new mercadopago_1.MercadoPagoConfig({
         accessToken: mercadoPagoAccessToken,
         options: { timeout: 10000 }
     }) : null;
-    
     const payment = client ? new mercadopago_1.Payment(client) : null;
-
     // ROTA: GET /api/status - Status da API
     app.get("/api/status", (req, res) => {
         res.json({
@@ -107,38 +94,46 @@ async function registerRoutes(app) {
             environment: process.env.NODE_ENV || 'development'
         });
     });
-
+    // MIDDLEWARE DE DEBUG: Capturar EXATAMENTE o que está chegando
+    app.use("/api/payments/criar-pagamento", (req, res, next) => {
+        console.log(`🕵️ MIDDLEWARE DEBUG - Dados RAW recebidos:`);
+        console.log(`🔹 Content-Type: ${req.headers['content-type']}`);
+        console.log(`🔹 Body keys: [${Object.keys(req.body).join(', ')}]`);
+        console.log(`🔹 Body completo:`, JSON.stringify(req.body, null, 2));
+        console.log(`🔹 telefone presente: ${!!req.body.telefone}`);
+        console.log(`🔹 endereco presente: ${!!req.body.endereco}`);
+        next();
+    });
     // ROTA: POST /api/payments/criar-pagamento - Para o frontend - ATUALIZADA
     app.post("/api/payments/criar-pagamento", async (req, res) => {
         try {
             console.log(`🛒 Dados recebidos do carrinho:`, JSON.stringify(req.body, null, 2));
-
+            console.log(`🔍 Verificando campos obrigatórios:`);
+            console.log(`- telefone: ${req.body.telefone ? '✅' : '❌'} (valor: "${req.body.telefone}")`);
+            console.log(`- endereco: ${req.body.endereco ? '✅' : '❌'} (tipo: ${typeof req.body.endereco})`);
             // Validar dados de entrada
             const validation = createPaymentSchema.safeParse(req.body);
             if (!validation.success) {
                 console.error(`❌ Erro de validação:`, validation.error.errors);
+                console.error(`❌ Dados que falharam na validação:`, JSON.stringify(req.body, null, 2));
                 return res.status(400).json({
                     error: "Dados inválidos",
                     details: validation.error.errors
                 });
             }
-
             const { carrinho, nomeCliente, email, telefone, endereco, total } = validation.data;
-
             if (!payment) {
                 return res.status(503).json({
                     error: "Serviço de pagamento indisponível",
                     details: "Mercado Pago não configurado. Configure MERCADO_PAGO_ACCESS_TOKEN."
                 });
             }
-
             // Criar descrição baseada no carrinho
             const firstItem = carrinho[0];
             const itemName = firstItem.name;
             const description = carrinho.length === 1
                 ? itemName
                 : `Compra de ${carrinho.length} produtos - ${itemName} e outros`;
-
             const paymentData = {
                 transaction_amount: total,
                 description: description,
@@ -165,7 +160,6 @@ async function registerRoutes(app) {
                     total_itens: carrinho.length
                 }
             };
-
             console.log(`💳 Criando pagamento PIX:`, {
                 amount: total,
                 description,
@@ -175,72 +169,68 @@ async function registerRoutes(app) {
                 endereco: endereco.cidade + ', ' + endereco.estado,
                 items_count: carrinho.length
             });
-
             const paymentResponse = await retryWithBackoff(() => payment.create({ body: paymentData }), 3, 1000);
-
             if (!paymentResponse) {
                 return res.status(500).json({
                     error: "Erro ao criar pagamento no Mercado Pago"
                 });
             }
-
             console.log(`✅ Pagamento criado no Mercado Pago:`, {
                 id: paymentResponse.id,
                 status: paymentResponse.status
             });
-
             // **NOVO: SALVAR PAGAMENTO NO SUPABASE**
             if (supabase) {
                 try {
                     console.log(`💾 Salvando pagamento no Supabase...`);
-                    
                     const { data: pagamentoData, error: supabaseError } = await supabase
                         .from('pagamentos')
                         .insert([
-                            {
-                                pagamento_id: paymentResponse.id.toString(),
-                                status: paymentResponse.status,
-                                email: email,
-                                nome_cliente: nomeCliente,
-                                telefone: telefone,
-                                valor: total,
-                                itens: carrinho.map(item => ({
-                                    produto_id: item.id,
-                                    nome: item.name,
-                                    quantidade: item.quantity,
-                                    preco_unitario: item.price || 0,
-                                    preco_total: (item.price || 0) * item.quantity,
-                                    variacoes: item.variacoes || {}
-                                })),
-                                endereco_entrega: {
-                                    cep: endereco.cep,
-                                    rua: endereco.rua,
-                                    numero: endereco.numero,
-                                    complemento: endereco.complemento || null,
-                                    bairro: endereco.bairro,
-                                    cidade: endereco.cidade,
-                                    estado: endereco.estado
-                                },
-                                created_at: new Date().toISOString(),
-                                updated_at: new Date().toISOString()
-                            }
-                        ])
+                        {
+                            pagamento_id: paymentResponse.id?.toString() || '',
+                            status: paymentResponse.status,
+                            email: email,
+                            nome_cliente: nomeCliente,
+                            telefone: telefone,
+                            valor: total,
+                            itens: carrinho.map(item => ({
+                                produto_id: item.id,
+                                nome: item.name,
+                                quantidade: item.quantity,
+                                preco_unitario: item.price || 0,
+                                preco_total: (item.price || 0) * item.quantity,
+                                variacoes: item.variacoes || {}
+                            })),
+                            endereco_entrega: {
+                                cep: endereco.cep,
+                                rua: endereco.rua,
+                                numero: endereco.numero,
+                                complemento: endereco.complemento || null,
+                                bairro: endereco.bairro,
+                                cidade: endereco.cidade,
+                                estado: endereco.estado
+                            },
+                            created_at: new Date().toISOString(),
+                            updated_at: new Date().toISOString()
+                        }
+                    ])
                         .select();
-
                     if (supabaseError) {
                         console.error(`❌ Erro ao salvar no Supabase:`, supabaseError);
                         // Não falha a operação, apenas loga o erro
-                    } else {
+                    }
+                    else {
                         console.log(`✅ Pagamento salvo no Supabase:`, pagamentoData?.[0]?.pagamento_id);
                     }
-                } catch (supabaseInsertError) {
+                }
+                catch (supabaseInsertError) {
                     console.error(`❌ Erro inesperado ao salvar no Supabase:`, supabaseInsertError);
                     // Não falha a operação, apenas loga o erro
                 }
-            } else {
+            }
+            else {
                 console.warn(`⚠️ Supabase não configurado - pagamento não foi salvo no banco`);
             }
-
             // Extrair informações do pagamento para retornar ao frontend
             const paymentInfo = {
                 id: paymentResponse.id,
@@ -260,14 +250,12 @@ async function registerRoutes(app) {
                     variacoes: item.variacoes || {}
                 }))
             };
-
             console.log(`✅ Pagamento processado com sucesso:`, {
                 id: paymentInfo.id,
                 status: paymentInfo.status,
                 qr_code_exists: !!paymentInfo.qr_code,
                 saved_to_supabase: !!supabase
             });
-
             res.json(paymentInfo);
         }
         catch (error) {
@@ -278,57 +266,48 @@ async function registerRoutes(app) {
             });
         }
     });
-
     // WEBHOOK: POST /api/payments/webhook - Recebe notificações do Mercado Pago - ATUALIZADO
     app.post("/api/payments/webhook", async (req, res) => {
         try {
             console.log(`🔔 Webhook recebido:`, JSON.stringify(req.body, null, 2));
-            
             const { data, type } = req.body;
-            
             // Verificar se é uma notificação de pagamento
             if (type === "payment" && data?.id) {
                 const paymentId = data.id;
-                
                 if (!payment) {
                     console.error(`❌ Mercado Pago não configurado para processar webhook`);
                     return res.status(503).json({ error: "Mercado Pago não configurado" });
                 }
-                
                 // Buscar dados completos do pagamento com retry
                 const paymentDetails = await retryWithBackoff(() => payment.get({ id: paymentId }), 3, 2000);
-                
                 console.log(`📊 Status do pagamento ${paymentId}:`, paymentDetails.status);
-
                 // **NOVO: ATUALIZAR STATUS NO SUPABASE**
                 if (supabase) {
                     try {
                         console.log(`💾 Atualizando status no Supabase para pagamento ${paymentId}...`);
-                        
                         const { error: updateError } = await supabase
                             .from('pagamentos')
-                            .update({ 
-                                status: paymentDetails.status,
-                                updated_at: new Date().toISOString()
-                            })
+                            .update({
+                            status: paymentDetails.status,
+                            updated_at: new Date().toISOString()
+                        })
                             .eq('pagamento_id', paymentId.toString());
-
                         if (updateError) {
                             console.error(`❌ Erro ao atualizar status no Supabase:`, updateError);
-                        } else {
+                        }
+                        else {
                             console.log(`✅ Status atualizado no Supabase: ${paymentDetails.status}`);
                         }
-                    } catch (supabaseUpdateError) {
+                    }
+                    catch (supabaseUpdateError) {
                         console.error(`❌ Erro inesperado ao atualizar Supabase:`, supabaseUpdateError);
                     }
                 }
-                
                 // Se pagamento foi aprovado, entregar os links
                 if (paymentDetails.status === "approved") {
                     await processApprovedPayment(paymentDetails, supabase);
                 }
             }
-            
             res.status(200).json({ received: true });
         }
         catch (error) {
@@ -339,34 +318,28 @@ async function registerRoutes(app) {
             });
         }
     });
-
     // ROTA: GET /api/payments/status/:id - Verificar status do pagamento
     app.get("/api/payments/status/:id", async (req, res) => {
         try {
             const paymentId = req.params.id;
-            
             if (!payment) {
                 return res.status(503).json({
                     error: "Serviço de pagamento indisponível",
                     details: "Mercado Pago não configurado"
                 });
             }
-            
             const paymentDetails = await retryWithBackoff(() => payment.get({ id: paymentId }), 3, 1000);
-            
             const response = {
                 id: paymentDetails.id,
                 status: paymentDetails.status,
                 status_detail: paymentDetails.status_detail,
                 transaction_amount: paymentDetails.transaction_amount
             };
-            
             // Se aprovado, buscar e incluir links de download
             if (paymentDetails.status === "approved") {
                 const downloadLinks = await getDownloadLinks(paymentDetails, supabase);
                 response.download_links = downloadLinks;
             }
-            
             res.json(response);
         }
         catch (error) {
@@ -377,32 +350,27 @@ async function registerRoutes(app) {
             });
         }
     });
-
     // NOVA ROTA: GET /api/payments/pedido/:id - Buscar dados do pedido no Supabase
     app.get("/api/payments/pedido/:id", async (req, res) => {
         try {
             const paymentId = req.params.id;
-            
             if (!supabase) {
                 return res.status(503).json({
                     error: "Base de dados indisponível",
                     details: "Supabase não configurado"
                 });
             }
-
             const { data: pedido, error } = await supabase
                 .from('pagamentos')
                 .select('*')
                 .eq('pagamento_id', paymentId)
                 .single();
-
             if (error || !pedido) {
                 return res.status(404).json({
                     error: "Pedido não encontrado",
                     details: error?.message || "Pedido não existe"
                 });
             }
-
             res.json({
                 id: pedido.pagamento_id,
                 status: pedido.status,
@@ -424,31 +392,24 @@ async function registerRoutes(app) {
             });
         }
     });
-
     // Função para processar pagamento aprovado
     async function processApprovedPayment(paymentDetails, supabase) {
         try {
             console.log(`🎉 Processando pagamento aprovado:`, paymentDetails.id);
-            
             if (!supabase) {
                 console.error(`❌ Supabase não configurado`);
                 return;
             }
-            
             const metadata = paymentDetails.metadata;
             const carrinho = metadata?.carrinho || [];
             const email = metadata?.email;
-            
             if (!carrinho.length || !email) {
                 console.error(`❌ Dados insuficientes no metadata:`, metadata);
                 return;
             }
-            
             console.log(`📦 Buscando links de download para ${carrinho.length} produtos`);
-            
             // Buscar download_url para cada produto no carrinho
             const downloadLinks = [];
-            
             for (const item of carrinho) {
                 try {
                     const { data: produto, error } = await supabase
@@ -456,12 +417,10 @@ async function registerRoutes(app) {
                         .select("id, name, download_url")
                         .eq("id", item.produto_id)
                         .single();
-                    
                     if (error || !produto) {
                         console.error(`❌ Erro ao buscar produto ${item.produto_id}:`, error);
                         continue;
                     }
-                    
                     if (produto.download_url) {
                         downloadLinks.push({
                             produto_id: produto.id,
@@ -470,71 +429,65 @@ async function registerRoutes(app) {
                             quantidade: item.quantidade,
                             variacoes: item.variacoes || {}
                         });
-                        
                         console.log(`✅ Link encontrado para produto ${produto.name}`);
-                    } else {
+                    }
+                    else {
                         console.warn(`⚠️ Produto ${produto.name} não possui download_url`);
                     }
-                } catch (error) {
+                }
+                catch (error) {
                     console.error(`❌ Erro ao processar produto ${item.produto_id}:`, error);
                 }
             }
-            
             if (downloadLinks.length > 0) {
                 console.log(`📧 Enviando ${downloadLinks.length} links para ${email}`);
-                
                 // Aqui você pode implementar o envio por email
                 // Por agora, apenas logamos os links que seriam enviados
                 console.log(`🔗 Links de download para ${email}:`, downloadLinks);
-                
                 // TODO: Implementar envio de email com os links
                 // await sendDownloadEmail(email, downloadLinks);
-                
                 // **NOVO: ATUALIZAR STATUS PARA "ENTREGUE" NO SUPABASE**
                 try {
                     const { error: deliveryUpdateError } = await supabase
                         .from('pagamentos')
-                        .update({ 
-                            status: 'delivered', // Status customizado para produtos digitais
-                            updated_at: new Date().toISOString()
-                        })
+                        .update({
+                        status: 'delivered', // Status customizado para produtos digitais
+                        updated_at: new Date().toISOString()
+                    })
                         .eq('pagamento_id', paymentDetails.id.toString());
-
                     if (deliveryUpdateError) {
                         console.error(`❌ Erro ao marcar como entregue:`, deliveryUpdateError);
-                    } else {
+                    }
+                    else {
                         console.log(`✅ Pagamento marcado como entregue no Supabase`);
                     }
-                } catch (error) {
+                }
+                catch (error) {
                     console.error(`❌ Erro ao atualizar status de entrega:`, error);
                 }
-            } else {
+            }
+            else {
                 console.warn(`⚠️ Nenhum link de download encontrado para o pagamento ${paymentDetails.id}`);
             }
-            
         }
         catch (error) {
             console.error(`❌ Erro ao processar pagamento aprovado:`, error);
         }
     }
-
     // Função para buscar links de download
     async function getDownloadLinks(paymentDetails, supabase) {
         if (!supabase)
             return [];
-        
         try {
             const metadata = paymentDetails.metadata;
             const carrinho = metadata?.carrinho || [];
             const downloadLinks = [];
-            
             for (const item of carrinho) {
                 const { data: produto, error } = await supabase
                     .from("produtos")
                     .select("id, name, download_url")
                     .eq("id", item.produto_id)
                     .single();
-                
                 if (!error && produto?.download_url) {
                     downloadLinks.push({
                         produto_id: produto.id,
@@ -544,7 +497,6 @@ async function registerRoutes(app) {
                     });
                 }
             }
-            
             return downloadLinks;
         }
         catch (error) {
@@ -552,7 +504,6 @@ async function registerRoutes(app) {
             return [];
         }
     }
-
     const httpServer = (0, http_1.createServer)(app);
     return httpServer;
 }

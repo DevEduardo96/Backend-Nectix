@@ -4,32 +4,56 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
-const routes_js_1 = require("./routes.js");
+const routes_1 = require("./routes");
 const cors_1 = __importDefault(require("cors"));
 require("dotenv/config");
 const app = (0, express_1.default)();
 // Configuração CORS para produção
 const allowedOrigins = [
-  'http://localhost:5173', // desenvolvimento local (Vite)
-  'http://localhost:5000', // desenvolvimento backend local
-  'https://nectix.store', // seu frontend em produção
+    'http://localhost:5173', // desenvolvimento local (Vite)
+    'http://localhost:5000', // desenvolvimento backend local
+    'https://nectix.store', // seu frontend em produção
 ];
-
 app.use((0, cors_1.default)({
     origin: (origin, callback) => {
-        // Permite requisições sem origin (aplicativos mobile, Postman, etc.)
-        if (!origin)
-            return callback(null, true);
-        if (allowedOrigins.includes(origin)) {
+        console.log(`🔍 CORS check - Origin: ${origin}`);
+        if (!origin) {
+            console.log('✅ CORS - Permitindo requisição sem origin');
             return callback(null, true);
         }
-        // Em produção, você pode ser mais restritivo
-        const msg = `Origin ${origin} não permitida pelo CORS`;
-        return callback(new Error(msg), false);
+        if (allowedOrigins.includes(origin)) {
+            console.log(`✅ CORS - Origin ${origin} permitida`);
+            return callback(null, true);
+        }
+        if (process.env.NODE_ENV === 'development') {
+            console.log(`⚠️  CORS - Origin ${origin} não está na lista, mas permitindo em desenvolvimento`);
+            return callback(null, true);
+        }
+        console.error(`❌ CORS - Origin ${origin} NÃO permitida`);
+        console.log('📋 Origins permitidas:', allowedOrigins);
+        // Negar a origem sem lançar erro, para evitar 500
+        return callback(null, false);
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true,
-    optionsSuccessStatus: 200
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with'],
+    optionsSuccessStatus: 200,
+}));
+// Responder OPTIONS para todas rotas (preflight)
+app.options('*', (0, cors_1.default)({
+    origin: (origin, callback) => {
+        if (!origin)
+            return callback(null, true);
+        if (allowedOrigins.includes(origin))
+            return callback(null, true);
+        if (process.env.NODE_ENV === 'development')
+            return callback(null, true);
+        return callback(null, false);
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with'],
+    optionsSuccessStatus: 200,
 }));
 // Middleware para parsing de JSON
 app.use(express_1.default.json({ limit: '10mb' }));
@@ -39,7 +63,11 @@ app.get('/health', (req, res) => {
     res.status(200).json({
         status: 'ok',
         timestamp: new Date().toISOString(),
-        version: process.env.npm_package_version || '1.0.0'
+        version: process.env.npm_package_version || '1.0.0',
+        cors: {
+            allowedOrigins,
+            environment: process.env.NODE_ENV || 'development'
+        }
     });
 });
 // Middleware para log de requisições API
@@ -69,7 +97,7 @@ app.use((req, res, next) => {
 });
 (async () => {
     try {
-        const server = await (0, routes_js_1.registerRoutes)(app);
+        const server = await (0, routes_1.registerRoutes)(app);
         // Middleware para tratamento de erros
         app.use((err, _req, res, _next) => {
             const status = err.status || err.statusCode || 500;
@@ -92,12 +120,13 @@ app.use((req, res, next) => {
             });
         });
         // Porta configurável via ambiente (Render usa PORT)
-        const port = process.env.PORT || 5000;
+        const port = parseInt(process.env.PORT || '5000');
         const host = process.env.HOST || '0.0.0.0';
         server.listen(port, host, () => {
             console.log(`🚀 Servidor rodando em ${host}:${port}`);
             console.log(`📍 Health check: http://${host}:${port}/health`);
             console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+            console.log(`🔒 CORS configurado para:`, allowedOrigins);
         });
         // Graceful shutdown
         process.on('SIGTERM', () => {
