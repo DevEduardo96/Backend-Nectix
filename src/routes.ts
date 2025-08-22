@@ -107,15 +107,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // MIDDLEWARE DE DEBUG: Capturar EXATAMENTE o que está chegando
+  app.use("/api/payments/criar-pagamento", (req, res, next) => {
+    console.log(`🕵️ MIDDLEWARE DEBUG - Dados RAW recebidos:`);
+    console.log(`🔹 Content-Type: ${req.headers['content-type']}`);
+    console.log(`🔹 Body keys: [${Object.keys(req.body).join(', ')}]`);
+    console.log(`🔹 Body completo:`, JSON.stringify(req.body, null, 2));
+    console.log(`🔹 telefone presente: ${!!req.body.telefone}`);
+    console.log(`🔹 endereco presente: ${!!req.body.endereco}`);
+    next();
+  });
+
   // ROTA: POST /api/payments/criar-pagamento - Para o frontend - ATUALIZADA
   app.post("/api/payments/criar-pagamento", async (req, res) => {
     try {
       console.log(`🛒 Dados recebidos do carrinho:`, JSON.stringify(req.body, null, 2));
+      console.log(`🔍 Verificando campos obrigatórios:`);
+      console.log(`- telefone: ${req.body.telefone ? '✅' : '❌'} (valor: "${req.body.telefone}")`);
+      console.log(`- endereco: ${req.body.endereco ? '✅' : '❌'} (tipo: ${typeof req.body.endereco})`);
 
       // Validar dados de entrada
       const validation = createPaymentSchema.safeParse(req.body);
       if (!validation.success) {
         console.error(`❌ Erro de validação:`, validation.error.errors);
+        console.error(`❌ Dados que falharam na validação:`, JSON.stringify(req.body, null, 2));
         return res.status(400).json({ 
           error: "Dados inválidos", 
           details: validation.error.errors
